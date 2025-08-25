@@ -102,14 +102,14 @@ Or
 python train.py config/train_harrypotter.py
 ```
 
-* Checkpoints are saved in `checkpoints/`.
-* Monitor training loss and generate sample text during training.
+* Based on the configuration, the model checkpoints are being written into the `--out_dir` directory `out-harrypotter-char` or `out-harrypotter`. 
+* Monitor training loss, training time and MFU during training.
 
 
 
 ## 🎨 Text Generation / Sampling
 
-Based on the configuration, the model checkpoints are being written into the `--out_dir` directory `out-shakespeare-char`. So once the training finishes we can sample from the best model by pointing the sampling script at this directory:
+Once the training finishes we can sample from the best model by pointing the sampling script at the checkpoints directory:
 
 ```sh
 python sample.py --out_dir=out-harrypotter-char
