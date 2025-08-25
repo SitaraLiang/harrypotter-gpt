@@ -11,7 +11,7 @@ This project fine-tunes a GPT-style Transformer on the full Harry Potter book se
 ```
 harrypotter-gpt/
 ├── data/                 # Cleaned corpus text, tokenized train/val data
-│   ├── harrypotter_clean/         # Cleaned corpus text
+│   ├── harrypotter_clean/        
 │   ├── harrypotter_char/
 |   │   ├── prepare.py  
 │   │   └── readme.md   
