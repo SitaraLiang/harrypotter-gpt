@@ -28,7 +28,6 @@ harrypotter-gpt/
 │   └── streamlit_app.py
 ├── notebooks/            # Exploratory notebooks
 ├── configs/              # Training and model configs
-├── checkpoints/          # Saved model weights
 ├── requirements.txt
 └── README.md
 ```
