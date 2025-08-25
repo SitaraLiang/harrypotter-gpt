@@ -4,16 +4,21 @@
 
 This project fine-tunes a GPT-style Transformer on the full Harry Potter book series and provides an interactive demo for generating fanfic-style text. It may further include a “from-scratch” GPT implementation for learning purposes.
 
----
+
 
 ## 📂 Project Structure
 
 ```
 harrypotter-gpt/
 ├── data/                 # Cleaned corpus text, tokenized train/val data
-│   ├── hp_clean/
-│   ├── prepare.py  
-│   └── readme.md      
+│   ├── harrypotter_clean/         # Cleaned corpus text
+│   ├── harrypotter_char/
+|   │   ├── prepare.py  
+│   │   └── readme.md   
+│   └── harrypotter/
+|       ├── prepare.py  
+│       └── readme.md   
+ 
 ├── src/                  # Source code adapted from nanoGPT (model, dataset, training, sampling)
 │   ├── model.py           
 │   ├── train.py
@@ -28,7 +33,7 @@ harrypotter-gpt/
 └── README.md
 ```
 
----
+
 
 ## ⚡ Features
 
@@ -37,7 +42,7 @@ harrypotter-gpt/
 * Interactive demo via Gradio (or Streamlit)
 * Optional from-scratch GPT implementation for learning
 
----
+
 
 ## 🛠️ Installation
 
@@ -56,7 +61,7 @@ pip install -r requirements.txt
 
 3. (Optional) For GPU acceleration, ensure PyTorch with CUDA is installed.
 
----
+
 
 ## 📝 Dataset
 
@@ -68,44 +73,58 @@ For this project, I used a cleaned version of the full Harry Potter series from 
 **Credit / Contact:**
 Dataset originally provided by [smaindola90](mailto:smaindola90@gmail.com)
 
-Tokenize and split into `train.bin` and `val.bin`.
+Using a simple command to tokenize and split into `train.bin` and `val.bin`.
 
-Using character-level tokenizer:
+Character-level tokenizer:
 ```bash
-python data/hp_char/prepare.py
+python data/harrypotter_char/prepare.py
 ```
+
+Or
 
 GPT-2 BPE tokenizer:
 ```bash
-python data/hp/prepare.py
+python data/harrypotter/prepare.py
 ```
 
----
+
 
 ## 🚀 Training
 
 Train the model using the prepared dataset:
 
-```bash
-python src/train.py --config configs/train_config.yaml
+```sh
+python train.py configs/train_harrypotter_char.py
+```
+
+Or
+
+```sh
+python train.py config/train_harrypotter.py
 ```
 
 * Checkpoints are saved in `checkpoints/`.
 * Monitor training loss and generate sample text during training.
 
----
+
 
 ## 🎨 Text Generation / Sampling
 
-Generate new text from a prompt:
+Based on the configuration, the model checkpoints are being written into the `--out_dir` directory `out-shakespeare-char`. So once the training finishes we can sample from the best model by pointing the sampling script at this directory:
 
-```bash
-python src/sample.py --prompt "Harry whispered"
+```sh
+python sample.py --out_dir=out-harrypotter-char
 ```
 
-* Adjust `max_new_tokens` and `temperature` to control creativity.
+Or
 
----
+```sh
+python sample.py --out_dir=out-harrypotter
+```
+
+This generates a few samples, for example:
+
+
 
 ## 🌐 Interactive Demo
 
@@ -118,7 +137,7 @@ python demo/gradio_app.py
 * Enter a story prompt, and the model will continue it in Harry Potter style.
 * Optional: Run `streamlit_app.py` for a Streamlit dashboard.
 
----
+
 
 ## 🏆 Future Work
 
@@ -130,7 +149,4 @@ python demo/gradio_app.py
 * Build a from-scratch GPT implementation
 * Compare outputs between from-scratch GPT and nanoGPT
 
-
-
----
 
