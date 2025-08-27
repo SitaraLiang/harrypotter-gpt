@@ -1,3 +1,23 @@
+# Data 
+data/clean/
+input.txt
+*.bin
+*.pkl
+*.pt
+*.pyc
+
+# VSCode
+.DS_Store
+.idea
+.vscode
+
+# Checkpoints
+.ipynb_checkpoints/
+
+# Virtual Environment
+env/
+venv/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
