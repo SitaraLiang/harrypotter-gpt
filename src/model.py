@@ -42,7 +42,7 @@ class SingleHeadAttention(nn.Module):
 
         return att @ v
 
-class MultiHeadAttentionWithResidual(nn.Module):
+class MultiHeadAttention(nn.Module):
     """ Multi-head attention layer """
     def __init__(self):
         super().__init__()
@@ -119,7 +119,7 @@ class Block(nn.Module):
     def __init__(self):
         super().__init__()
         self.norm1 = NormLayer()
-        self.masked_mth = MultiHeadAttentionWithResidual()
+        self.masked_mth = MultiHeadAttention()
         self.norm2 = NormLayer()
         self.ffn = FFN()
 
