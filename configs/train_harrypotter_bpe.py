@@ -10,7 +10,7 @@ log_interval = 1 # don't print too too often
 # we expect to overfit on this small dataset, so only save when val improves
 always_save_checkpoint = False
 
-dataset = 'harrypotter_hf_bpe'
+dataset = 'harrypotter_bpe'
 gradient_accumulation_steps = 4
 batch_size = 12
 context_length = 128 # context of up to 256 previous characters

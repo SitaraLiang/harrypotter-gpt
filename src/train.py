@@ -206,7 +206,7 @@ dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported
 compile = True
 
 # ----------- Data & batching -----------
-dataset = 'harrypotter_hf_bpe'
+dataset = 'harrypotter_bpe'
 gradient_accumulation_steps = 42 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size 
                 # per accumulation step (per process). If you accumulate 40 times, 
