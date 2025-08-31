@@ -10,6 +10,8 @@ from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Whitespace
 import pickle
+from tokenizers.pre_tokenizers import ByteLevel
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 
 base_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(base_dir)
@@ -28,7 +30,8 @@ val_data = data[int(n*0.9):]
 tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
 
 # Pre-tokenizer
-tokenizer.pre_tokenizer = Whitespace()
+tokenizer.pre_tokenizer = ByteLevel()
+
 
 # Trainer configuration
 trainer = BpeTrainer(
@@ -40,6 +43,8 @@ trainer = BpeTrainer(
 
 # Train the tokenizer
 tokenizer.train([str(input_file_path)], trainer)
+
+tokenizer.decoder = ByteLevelDecoder()
 
 # Encode train/val
 train_ids = tokenizer.encode(train_data).ids
@@ -54,15 +59,19 @@ train_ids.tofile(os.path.join(base_dir, 'train.bin'))
 val_ids.tofile(os.path.join(base_dir, 'val.bin')) 
 
 meta = {
-    "vocab_size": tokenizer.get_vocab_size(),
-    "itos": {i: token for token, i in tokenizer.get_vocab().items()},
-    "stoi": tokenizer.get_vocab(),
+    "vocab_size": tokenizer.get_vocab_size()
 }
+
+print(f"vocab size : {tokenizer.get_vocab_size()}")
 
 with open(os.path.join(base_dir, "meta.pkl"), "wb") as f:
     pickle.dump(meta, f)
 
+# Save tokenizer object itself for later use
+tokenizer.save(os.path.join(base_dir, "tokenizer.json"))
+
 """
 train has 1,406,003 tokens
 val has 156,821 tokens
+vocab size : 5000
 """

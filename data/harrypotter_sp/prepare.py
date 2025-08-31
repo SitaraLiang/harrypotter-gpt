@@ -60,9 +60,8 @@ options = dict(
 spm.SentencePieceTrainer.train(**options)
 
 sp = spm.SentencePieceProcessor()
-sp.load('tok400.model')
+sp.load(os.path.join(base_dir, 'tok400.model'))
 vocab = [[sp.id_to_piece(idx), idx] for idx in range(sp.get_piece_size())]
-
 
 # Encode to token IDs
 train_ids = sp.encode(train_data, out_type=int)
@@ -79,9 +78,10 @@ val_ids.tofile(os.path.join(base_dir, 'val.bin'))
 vocab_file = os.path.join(base_dir, 'meta.pkl')
 meta = {
     'vocab_size': sp.get_piece_size(),
-    'id_to_piece': {idx: sp.id_to_piece(idx) for idx in range(sp.get_piece_size())},
-    'piece_to_id': {sp.id_to_piece(idx): idx for idx in range(sp.get_piece_size())},
 }
+
+print(f"vocab size: {sp.get_piece_size()}")
+
 with open(vocab_file, 'wb') as f:
     pickle.dump(meta, f)
 
@@ -89,4 +89,5 @@ with open(vocab_file, 'wb') as f:
 """
 train has 3,654,586 tokens
 val has 403,328 tokens
+vocab size: 400
 """ 

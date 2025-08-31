@@ -5,26 +5,32 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+
 from model_configs import GPTConfig
 
+"""
+At first I separated single-head and multi-head into different classes, each single-head module 
+needs its own causal mask and softmax. Repeating this for every head introduces redundant 
+computation. Separate single-head modules also allocate separate intermediate tensors for 
+Q, K, V for each head. The model ran too slow even for a small harrypotter-char model.
+
+So then I switched to CausalSelfAttention implementation, combined these two classes: 
+one vectorized, batched operation for all heads -> much faster and memory-efficient.
+
+
 class SingleHeadAttention(nn.Module):
-    """ Masked single head attention layer """
     def __init__(self):
         super().__init__()
 
-        self.key = nn.Linear(GPTConfig.n_embd, GPTConfig.head_size, bias=GPTConfig.includeBias)
-        self.query = nn.Linear(GPTConfig.n_embd, GPTConfig.head_size,bias=GPTConfig.includeBias)
-        self.value = nn.Linear(GPTConfig.n_embd, GPTConfig.head_size, bias=GPTConfig.includeBias)
+        self.key = nn.Linear(GPTConfig.n_embd, GPTConfig.n_embd // GPTConfig.n_head, bias=GPTConfig.includeBias)
+        self.query = nn.Linear(GPTConfig.n_embd, GPTConfig.n_embd // GPTConfig.n_head,bias=GPTConfig.includeBias)
+        self.value = nn.Linear(GPTConfig.n_embd, GPTConfig.n_embd // GPTConfig.n_head, bias=GPTConfig.includeBias)
         self.dropout = nn.Dropout(GPTConfig.dropout)
         # non-trainable tensors
         self.register_buffer('tril', torch.tril(torch.ones(GPTConfig.context_length, GPTConfig.context_length)))
                     
     
     def forward(self, x):
-        """
-        Args: 
-            x (tuple): shape (batch, seq_len, n_embd). hidden_dim = n_features = n_embd
-        """
         _, seq_len, _ = x.shape
 
         # The reason why the output of a single head is (B, T, head_size)
@@ -43,21 +49,15 @@ class SingleHeadAttention(nn.Module):
         return att @ v
 
 class MultiHeadAttention(nn.Module):
-    """ Multi-head attention layer """
     def __init__(self):
         super().__init__()
 
         self.heads = nn.ModuleList(
-            [SingleHeadAttention(GPTConfig.head_size) for _ in range(GPTConfig.n_head)])
+            [SingleHeadAttention() for _ in range(GPTConfig.n_head)])
         self.w_o = nn.Linear(GPTConfig.n_embd, GPTConfig.n_embd)
         self.dropout = nn.Dropout(GPTConfig.dropout)
 
     def forward(self, x):
-        """
-        Args: 
-            x (tuple): (batch, seq_len, hidden_dim). hidden_dim = n_features = n_embd
-        """
-
         # Concatenates these tensors along the last dimension, i.e., the feature dimension
         # After concatenating: (B,T,num_heads×head_size)
         # Recall: num_heads×head_size=n_embd
@@ -67,13 +67,73 @@ class MultiHeadAttention(nn.Module):
 
         return out
 
+"""
+
+class CausalSelfAttention(nn.Module):
+    """Masked multi-head self-attention (QKV in one matmul, efficient GPT-style)."""
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0, "n_embd must be divisible by n_head"
+        self.n_head = config.n_head
+        self.head_size = config.n_embd // config.n_head
+
+        # One big projection for Q, K, V (B, T, n_embd) -> (B, T, 3*n_embd)
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.includeBias)
+        # Output projection back to (B, T, n_embd)
+        self.w_o = nn.Linear(config.n_embd, config.n_embd, bias=config.includeBias)
+
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+
+        # Register a causal mask shaped (1,1,T,T), so it broadcasts over batch & heads
+        self.register_buffer(
+            "tril",
+            torch.tril(torch.ones(config.context_length, config.context_length))
+                 .view(1, 1, config.context_length, config.context_length)
+        )
+
+    def forward(self, x):
+        B, T, C = x.size()
+
+        # Project once, then split into q, k, v
+        qkv = self.c_attn(x)                           # (B, T, 3*C)
+        q, k, v = qkv.split(C, dim=-1)                 # each (B, T, C)
+
+        # Reshape into heads: (B, n_head, T, head_size)
+        q = q.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+
+        # Scaled dot-product attention + causal mask
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(self.head_size))  # (B, n_head, T, T)
+        
+        # Apply causal mask (broadcasts from (1,1,T,T))
+        mask = self.tril[:, :, :T, :T] == 0
+        att = att.masked_fill(mask, float('-inf'))
+
+        # Softmax + dropout
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+
+        # Apply attention to values
+        y = att @ v # (B, n_head, T, head_size)        
+
+        # Recombine heads                    
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # (B, T, n_head*head_size) == (B, T, C)
+
+        # Final linear + dropout
+        y = self.w_o(y)                                 # (B, T, C)
+        y = self.resid_dropout(y)
+        return y
+
+        
 class NormLayer(nn.Module):
     """ Normalization Layer """
-    def __init__(self):
+    def __init__(self, n_embd, includeBias):
         super().__init__()
         # gamma=1, beta=0: pure normalization (zero mean, unit variance).
-        self.weight = nn.Parameter(torch.ones(GPTConfig.n_embd))
-        self.bias = nn.Parameter(torch.zeros(GPTConfig.n_embd)) if GPTConfig.includeBias else None
+        self.weight = nn.Parameter(torch.ones(n_embd))
+        self.bias = nn.Parameter(torch.zeros(n_embd)) if includeBias else None
 
     def forward(self, x):
         """
@@ -81,27 +141,27 @@ class NormLayer(nn.Module):
             x (tuple): (batch, seq_len, hidden_dim). hidden_dim = n_features = n_embd
         """
         return F.layer_norm(x, 
-                            normalized_shape=self.weights.shape,
-                            weight=self.weights,
+                            normalized_shape=self.weight.shape,
+                            weight=self.weight,
                             bias=self.bias,
                             eps=1e-5) # a small constant to avoid division by zero.
 
 class FFN(nn.Module):
     """ Position-wise Feed-Forward Networks """
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
         self.ffn = nn.Sequential(
             # maps from d_model → d_ff
-            nn.Linear(GPTConfig.n_embd, 4*GPTConfig.n_embd, bias=GPTConfig.includeBias),
+            nn.Linear(config.n_embd, 4*config.n_embd, bias=config.includeBias),
             
             # GELU = Gaussian Error Linear Unit.
             nn.GELU(),
             
             # maps from d_ff → d_model
-            nn.Linear(4*GPTConfig.n_embd, GPTConfig.n_embd, bias=GPTConfig.includeBias),
+            nn.Linear(4*config.n_embd, config.n_embd, bias=config.includeBias),
 
             # Residual Dropout
-            nn.Dropout(GPTConfig.dropout)
+            nn.Dropout(config.dropout)
         )
 
     def forward(self, x):
@@ -116,12 +176,12 @@ class FFN(nn.Module):
 
 class Block(nn.Module):
     """ A single layer inside the model architecture which will be applied N times"""
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
-        self.norm1 = NormLayer()
-        self.masked_mth = MultiHeadAttention()
-        self.norm2 = NormLayer()
-        self.ffn = FFN()
+        self.norm1 = NormLayer(config.n_embd, config.includeBias)
+        self.att = CausalSelfAttention(config)
+        self.norm2 = NormLayer(config.n_embd, config.includeBias)
+        self.ffn = FFN(config)
 
     def forward(self, x):
         """
@@ -130,28 +190,28 @@ class Block(nn.Module):
         Args: 
             x (tuple): (batch, seq_len, hidden_dim). hidden_dim = n_features = n_embd
         """
-        x = x + self.masked_mth(self.norm1(x))
+        x = x + self.att(self.norm1(x))
         x = x + self.ffn(self.norm2(x))
         return x
         
 class GPT(nn.Module):
     """ Main architecture of a GPT-style decoder """
-    def __init__(self):
+    def __init__(self, gptconfig):
         super().__init__()
-        assert GPTConfig.context_length is not None
-        assert GPTConfig.vocab_size is not None
+        assert gptconfig.context_length is not None
+        assert gptconfig.vocab_size is not None
 
-        self.config = GPTConfig()
+        self.config = gptconfig
 
         self.transformer = nn.ModuleDict(dict(
             token_embd_table = nn.Embedding(self.config.vocab_size, self.config.n_embd),
             pos_embd_table = nn.Embedding(self.config.context_length, self.config.n_embd),
             dropout = nn.Dropout(self.config.dropout),
-            blocks = nn.ModuleList([Block() for _ in range(self.config.n_layer)]),
+            blocks = nn.ModuleList([Block(self.config) for _ in range(self.config.n_layer)]),
 
             # an additional layer normalization was added after the final self-attention block
             # source: GPT-2 paper
-            norm = NormLayer(),
+            norm = NormLayer(self.config.n_embd, self.config.includeBias),
         ))
 
         # Takes the final hidden states and produces logits over the vocabulary.
@@ -274,8 +334,14 @@ class GPT(nn.Module):
             for name, param in self.named_parameters() 
             if param.requires_grad
         )
-        params_decay = [p for n, p in params.items() if p.dim() >= 2]
-        params_non_decay = [p for n, p in params.items() if p.dim() < 2]
+        params_decay = [p for _, p in params.items() if p.dim() >= 2]
+        params_non_decay = [p for _, p in params.items() if p.dim() < 2]
+
+        # Helps debug and confirm that weight decay is applied to the correct parameters.
+        num_decay_params = sum(p.numel() for p in params_decay)
+        num_nodecay_params = sum(p.numel() for p in params_non_decay)
+        print(f"num decayed parameter tensors: {len(params_decay)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(params_non_decay)}, with {num_nodecay_params:,} parameters")
 
         optimize_params = [
             {'params': params_decay, 'weight_decay': weight_decay},
@@ -286,67 +352,146 @@ class GPT(nn.Module):
         
         return optimizer
 
-    def crop_block_size(self, new_context_length):
-        """ Reduce the block size if the new_block_size < GPTConfig.context_length
-            e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
-            but want to use a smaller block size for some smaller, simpler model
+    def crop_context_length(self, new_context_length):
+        """ Reduce the context_length if the new_context_length < GPTConfig.context_length
+            e.g. we may load the GPT2 pretrained model checkpoint (context_length 1024)
+            but want to use a smaller context_length for some smaller, simpler model
         """
-        assert new_context_length <= self.config.context_length, f"Error: Model maximal context length is only {GPTConfig.context_length}"
+        assert new_context_length <= self.config.context_length, f"Error: Model maximal context length is only {self.config.context_length}"
         self.config.context_length = new_context_length
 
         # Recall: pos_embd_table.shape = (context_length, n_embd)
         self.transformer.pos_embd_table.weight = nn.Parameter(self.transformer.pos_embd_table.weight[:new_context_length])
 
         for block in self.transformer.blocks:
-            for head in block.masked_mth.heads:
-                if hasattr(head, "tril"):
-                    head.tril = head.tril[:new_context_length, :new_context_length]
+                if hasattr(block.attn, "tril"):
+                    block.attn.tril = block.attn.tril[:new_context_length, :new_context_length]
 
     @classmethod
     def from_pretrained(cls, model_type, override_args=None):
         """
-        Load a pretrained model from Hugging Face, either GPT-2 or LLaMA.
-
-        Args:
-            model_type (str): Name of the model, e.g., 'gpt2', 'gpt2-medium', 'llama-7b'.
-            override_args (dict, optional): Overrides for model configuration, e.g., {'dropout': 0.1}.
-
-        Returns:
-            model: Hugging Face pretrained model ready for inference or fine-tuning.
+        Load pretrained weights from Hugging Face GPT-2 or LLaMA into our local GPT class.
+        Always returns a local GPT instance with weights copied over.
         """
+
         override_args = override_args or {}
 
-        # Validate supported models
+        # Define supported models
         supported_models = {
             'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl',
             'llama-7b', 'llama-13b'
         }
         assert model_type in supported_models, f"Unsupported model: {model_type}"
 
-        # Load Hugging Face model
-        if model_type.startswith('gpt2'):
-            from transformers import GPT2LMHeadModel, GPT2Config
-            config = GPT2Config.from_pretrained(model_type)
-            
-            for k, v in override_args.items():
-                if hasattr(config, k):
-                    setattr(config, k, v)
-            model = GPT2LMHeadModel.from_pretrained(model_type, config=config)
+        # -----------------
+        # Handle GPT-2 family
+        # -----------------
+        if model_type.startswith("gpt2"):
+            from transformers import GPT2LMHeadModel
+            print(f"Loading pretrained weights from Hugging Face {model_type}...")
 
-        elif model_type.startswith('llama'):
-            from transformers import LlamaForCausalLM, LlamaConfig
-            config = LlamaConfig.from_pretrained(model_type)
-            
-            for k, v in override_args.items():
-                if hasattr(config, k):
-                    setattr(config, k, v)
-            model = LlamaForCausalLM.from_pretrained(model_type, config=config)
+            # config mapping for GPT-2 sizes
+            config_args = {
+                'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),   # 124M
+                'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M
+                'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M
+                'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M
+            }[model_type]
 
-        else:
-            raise ValueError(f"Unsupported model_type: {model_type}")
+            print("Forcing GPT-2 defaults: vocab_size=50257, block_size=1024, bias=True")
+            config_args['vocab_size'] = 50257
+            config_args['context_length'] = 1024
+            config_args['includeBias'] = True
 
-        print(f"Loaded pretrained {model_type} successfully.")
-        return model
+            # optional dropout override
+            if 'dropout' in override_args:
+                print(f"Overriding dropout to {override_args['dropout']}")
+                config_args['dropout'] = override_args['dropout']
+
+            # init local GPT
+            config = GPTConfig(**config_args)
+            model = GPT(config)
+
+            # load Hugging Face model
+            model_hf = GPT2LMHeadModel.from_pretrained(model_type)
+            sd_hf = model_hf.state_dict()
+
+            # local state dict
+            sd = model.state_dict()
+            sd_hf = model_hf.state_dict()
+
+            # Keys in our model
+            sd_keys = [k for k in sd.keys() if not k.endswith('.attn.bias')]
+
+            # Keys in Hugging Face model
+            sd_keys_hf = [k for k in sd_hf.keys()
+                        if not k.endswith('.attn.bias')
+                        and not k.endswith('.attn.masked_bias')]
+
+            # keys that need transposition
+            transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
+
+            # copy weights
+            for k in sd_keys_hf:
+                if any(k.endswith(w) for w in transposed):
+                    assert sd_hf[k].shape[::-1] == sd[k].shape
+                    with torch.no_grad():
+                        sd[k].copy_(sd_hf[k].t())
+                else:
+                    assert sd_hf[k].shape == sd[k].shape
+                    with torch.no_grad():
+                        sd[k].copy_(sd_hf[k])
+
+            print(f"Loaded GPT-2 {model_type} into local GPT successfully.")
+            return model
+
+        # -----------------
+        # Handle LLaMA family
+        # -----------------
+        elif model_type.startswith("llama"):
+            from transformers import LlamaForCausalLM
+            print(f"Loading pretrained weights from Hugging Face {model_type}...")
+
+            # config mapping (simplified; you can extend with exact values)
+            config_args = {
+                'llama-7b':  dict(n_layer=32, n_head=32, n_embd=4096),
+                'llama-13b': dict(n_layer=40, n_head=40, n_embd=5120),
+            }[model_type]
+
+            # Force LLaMA defaults
+            config_args['bias'] = None  # LLaMA doesn’t use bias
+            config_args['block_size'] = 2048  # typical context length, adjust as needed
+
+            # allow dropout override
+            if 'dropout' in override_args:
+                print(f"Overriding dropout to {override_args['dropout']}")
+                config_args['dropout'] = override_args['dropout']
+
+            # init local GPT
+            config = GPTConfig(**config_args)
+            model = GPT(config)
+
+            # load Hugging Face model
+            model_hf = LlamaForCausalLM.from_pretrained(model_type)
+            sd_hf = model_hf.state_dict()
+
+            # local state dict
+            sd = model.state_dict()
+            sd_keys = [k for k in sd.keys()]
+            sd_keys_hf = [k for k in sd_hf.keys()]
+
+            # NOTE: LLaMA weight mapping differs; you’ll need a mapping function here.
+            # Example stub:
+            mapping = {hf_k: local_k for hf_k, local_k in zip(sd_keys_hf, sd_keys)}
+
+            for hf_k, local_k in mapping.items():
+                assert sd_hf[hf_k].shape == sd[local_k].shape, f"Shape mismatch for {hf_k} vs {local_k}"
+                with torch.no_grad():
+                    sd[local_k].copy_(sd_hf[hf_k])
+
+            print(f"Loaded LLaMA {model_type} into local GPT successfully.")
+            return model
+
 
     @torch.no_grad() # not to track gradients inside this function
     def generate(self, context, max_new_tokens, temperature=1.0, top_k=0):
@@ -395,4 +540,63 @@ class GPT(nn.Module):
 
             n_token += 1
 
+        # tensor of shape [1, sequence_length]
         return context
+    
+    def estimate_mfu(self, fwdbwd_per_iter, dt):
+        """
+        Source: NanoGPT
+
+        This function estimates model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS:
+        - How many FLOPs the model needs per iteration.
+        - How many FLOPs per second it achieves in practice.
+        - Divides by the GPU’s theoretical max (312 TFLOPS on A100).
+        - This gives MFU (Model FLOPs Utilization), a standard metric for training efficiency.
+
+        fwdbwd_per_iter: how many forward+backward passes happen in one training iteration. (Sometimes training steps are broken into micro-batches → multiple fwdbwd per iter).
+        dt: time (in seconds) it took to complete one iteration.
+        Returns: an estimate of Model FLOPs Utilization (MFU), i.e., what fraction of the GPU’s max compute was used.
+        """
+
+        # first estimate the number of flops we do per iteration.
+        # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
+
+        # Calls a helper method that counts all trainable parameters in the model.
+        # Denoted as N (number of parameters).
+        N = self.get_num_params()
+
+        # Extracts model hyperparameters from config:
+        #   - L: number of Transformer layers.
+        #   - H: number of attention heads.
+        #   - Q: head dimension (embedding_size ÷ number_of_heads).
+        #   - T: block size (sequence length).
+        # So now we know the architecture shape.
+        cfg = self.config
+        L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head, cfg.context_length
+
+        # This formula is from the PaLM paper (Appendix B). Rough breakdown:
+        # 6*N: FLOPs to update weights per token (forward + backward passes for parameters).
+        # 12*L*H*Q*T: FLOPs for multi-head self-attention and feed-forward computations (depends on layers, heads, head size, and sequence length).
+        # So this gives how many FLOPs are needed for processing a single token.
+        flops_per_token = 6*N + 12*L*H*Q*T
+
+        # Each forward+backward pass processes a sequence of T tokens.
+        # Multiply per-token FLOPs by T.
+        flops_per_fwdbwd = flops_per_token * T
+
+        # If we do multiple forward+backward passes per iteration (micro-batching), scale up accordingly.
+        flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
+
+        # express our flops throughput as ratio of A100 bfloat16 peak flops
+        # FLOPs per iteration ÷ time per iteration = FLOPs achieved per second.
+        flops_achieved = flops_per_iter * (1.0/dt)
+        # NVIDIA A100 GPU can theoretically do 312 trillion FLOPs per second (TFLOPS) in bfloat16.
+        # This is the “ceiling” we compare against.
+        flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
+
+        # Ratio of achieved compute throughput vs theoretical max.
+        # Example: If the model is doing 150 TFLOPS on A100, MFU = 150 / 312 ≈ 0.48 (48% utilization).
+        mfu = flops_achieved / flops_promised
+
+        # Returns a float between 0 and 1 (0–100% GPU compute efficiency).
+        return mfu
