@@ -19,7 +19,7 @@ def init_model(model_args, init_from, out_dir=None, device='cpu', dropout=None, 
 
     Args:
         model_args (dict): Hyperparameters for GPTConfig.
-        init_from (str): 'scratch', 'resume', or Hugging Face model name like 'gpt2', 'llama-7b'.
+        init_from (str): 'scratch' or 'resume'
         out_dir (str, optional): Directory to load checkpoint from if init_from=='resume'.
         device (str): 'cpu' or 'cuda'.
         dropout (float, optional): Dropout override.
@@ -60,20 +60,6 @@ def init_model(model_args, init_from, out_dir=None, device='cpu', dropout=None, 
 
         # Load weights
         model.load_state_dict(state_dict)
-
-    elif init_from.startswith('gpt2') or init_from.startswith('llama'):
-        print(f"Initializing from pretrained Hugging Face weights: {init_from}")
-
-        override_args = {}
-        if dropout is not None:
-            override_args['dropout'] = dropout
-
-        # Always returns a local GPT instance with pretrained weights
-        model = GPT.from_pretrained(init_from, override_args)
-
-        # Sync model_args with the model config
-        for k, v in vars(model.config).items():
-            model_args[k] = v
 
     else:
         raise ValueError(f"Unsupported init_from value: {init_from}")

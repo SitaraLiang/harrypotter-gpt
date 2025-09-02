@@ -50,7 +50,7 @@ def load_model(init_from, out_dir, device, compile=False):
     return model, checkpoint
 
 
-def load_encoding(init_from, checkpoint, tokenizer_type='bpe'):
+def load_encoding(init_from, checkpoint, tokenizer_type=None):
     """Load encoding (stoi/itos if available, otherwise GPT-2 tokenizer)."""
     # Check if meta exists from a previous dataset
     if init_from == 'resume' and checkpoint and 'config' in checkpoint and 'dataset' in checkpoint['config']:
@@ -67,9 +67,9 @@ def load_encoding(init_from, checkpoint, tokenizer_type='bpe'):
             decode_fn = lambda l: tokenizer.decode(l)
             return encode_fn, decode_fn
 
-        elif tokenizer_type == "sentencepiece":
+        elif tokenizer_type == "sp":
             import sentencepiece as spm
-            model_file = os.path.join(base_path, "tok400.model")
+            model_file = os.path.join(base_path, "tok5000.model")
             assert os.path.exists(model_file), f"Model file doesn't exist: {model_file}"
             sp = spm.SentencePieceProcessor()
             sp.load(model_file)
@@ -89,10 +89,8 @@ def load_encoding(init_from, checkpoint, tokenizer_type='bpe'):
                 return encode_fn, decode_fn
             else:
                 raise ValueError(f"Meta.pkl doesn't exist: {meta_path}")
-        else:
-            raise ValueError(f"Unknown tokenizer_type: {tokenizer_type}")
-
-    # Fallback to GPT-2 tokenizer
+    
+     # Fallback to GPT-2 tokenizer
     enc = tiktoken.get_encoding("gpt2")
     encode_fn = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
     decode_fn = lambda l: enc.decode(l)
@@ -120,14 +118,14 @@ def generate_text(model, x, decode, ctx, max_new_tokens, temperature, top_k):
 base_dir = os.path.dirname(__file__)
 init_from = "resume"
 out_dir = "out"
-start = "\n\n"
+start = "\n"
 max_new_tokens = 1000
 temperature = 0.8
 top_k = 200
 device = "mps"
 dtype = "float16"
 compile = False
-tokenizer_type = 'bpe'
+tokenizer_type = 'tiktoken'
 exec(open(os.path.join(base_dir, 'configurator.py')).read()) # overrides from command line or config file
 
 device_type, ptdtype, ctx = setup_device_and_context(device, dtype)

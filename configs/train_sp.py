@@ -1,7 +1,7 @@
-# train a miniature character-level harry potter model
+# train a miniature sentencepiece-level harry potter model
 # good for debugging and playing on macbooks and such
 
-out_dir = 'out-harrypotter-bpe' # where to save the checkpoints & logs
+out_dir = 'out-harrypotter-sp' # where to save the checkpoints & logs
 eval_interval = 250 # Run evaluation every 250 optimization steps.
                     # keep frequent because we'll overfit
 eval_iters = 20 # # During each evaluation, run 200 minibatches to estimate metrics.
@@ -10,10 +10,10 @@ log_interval = 1 # don't print too too often
 # we expect to overfit on this small dataset, so only save when val improves
 always_save_checkpoint = False
 
-dataset = 'harrypotter_bpe'
-gradient_accumulation_steps = 4
-batch_size = 12
-context_length = 128 # context of up to 256 previous characters
+dataset = 'harrypotter_sp'
+gradient_accumulation_steps = 1
+batch_size = 24
+context_length = 128
 
 # baby GPT model :)
 n_layer = 12

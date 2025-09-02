@@ -13,7 +13,7 @@ always_save_checkpoint = False
 dataset = 'harrypotter_char'
 gradient_accumulation_steps = 1
 batch_size = 24
-context_length = 512 # context of up to 256 previous characters
+context_length = 512
 
 # baby GPT model :)
 n_layer = 12
