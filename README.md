@@ -40,31 +40,28 @@ This project implements a GPT-2–like decoder, trained on the complete Harry Po
   * Model FLOPs utilization tracking for performance monitoring.
 
 
-## Installation
+## **Setup**
 
-Clone the repo:
+1. Clone the repo:
 
 ```bash
 git clone https://github.com/sitaraliang/harrypotter-gpt.git
 cd harrypotter-gpt
 ```
 
-## **Setup**
-
-1. Install dependencies:
+2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Prepare dataset & tokenizer
+3. Prepare dataset & tokenizer
 
    * Store tokenized training and validation sets as `train.bin` and `val.bin`.
    * Include a `meta.pkl` file with `vocab_size`.
    * For sentencepiece and bpe, we also store the corresponding tokenizer trained on our Harry Potter corpus.
 
-3. (Optional) For GPU acceleration, ensure PyTorch with CUDA is installed.
-
+4. (Optional) For GPU acceleration, ensure PyTorch with CUDA is installed.
 
 
 ## Dataset
@@ -85,6 +82,17 @@ python data/harrypotter_char/prepare.py
 ```
 
 
+## **Configuration**
+
+Key parameters can be customized:
+
+* `n_layer`, `n_head`, `n_embd` – Model size.
+* `context_length` – Sequence length for training.
+* `batch_size`, `gradient_accumulation_steps` – Batch configuration.
+* `learning_rate`, `warmup_iters`, `lr_decay_iters` – Training schedule.
+* `dropout` – Regularization.
+* `device` – CPU, GPU, or MPS.
+
 
 ## Training
 
@@ -97,19 +105,6 @@ python train.py configs/train_bpe.py
 
 * Based on the configuration, the model checkpoints are being written into the `--out_dir` directory respectively.
 * Monitor training loss, training time and MFU during training.
-
-
-## **Configuration**
-
-Key parameters can be customized:
-
-* `n_layer`, `n_head`, `n_embd` – Model size.
-* `context_length` – Sequence length for training.
-* `batch_size`, `gradient_accumulation_steps` – Batch configuration.
-* `learning_rate`, `warmup_iters`, `lr_decay_iters` – Training schedule.
-* `dropout` – Regularization.
-* `device` – CPU, GPU, or MPS.
-
 
 
 ## Text Generation / Sampling
